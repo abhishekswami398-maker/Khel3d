@@ -1,0 +1,175 @@
+<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>3D खेल</title>
+<style>
+:root{--pn:rgba(255,255,255,.88);--fg:#1c2233;--ac:#e8890c;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--pn:rgba(20,24,38,.85);--fg:#f4f1ea;--ac:#ffb347;color-scheme:dark}}
+:root[data-theme="dark"]{--pn:rgba(20,24,38,.85);--fg:#f4f1ea;--ac:#ffb347;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{margin:0;height:100%;overflow:hidden;background:#141826;font-family:system-ui,sans-serif;color:var(--fg)}
+canvas{position:fixed;inset:0;touch-action:none}
+#hud{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 6px) 8px 0}
+#top{display:flex;gap:6px;overflow-x:auto}
+button{font:600 14px system-ui;border:0;border-radius:12px;padding:9px 12px;background:var(--pn);color:var(--fg);white-space:nowrap}
+button.on{background:var(--ac);color:#111}
+#msg{margin-top:6px;display:inline-block;background:var(--pn);padding:6px 10px;border-radius:10px;font-size:14px}#msg:empty{display:none}
+#dice{position:fixed;right:14px;top:calc(env(safe-area-inset-top,0px) + 100px);font:700 44px system-ui;color:#fff;text-shadow:0 2px 6px #000}
+#bot{position:fixed;left:0;right:0;bottom:0;padding:8px 8px calc(env(safe-area-inset-bottom,0px) + 12px);display:flex;gap:10px;justify-content:center;align-items:center}
+#btn{background:var(--ac);color:#111;font-size:17px;padding:13px 22px}#sl{width:60%}
+</style></head><body>
+<div id="hud"><div id="top"><button onclick="start(0)">🐍 साँप-सीढ़ी</button><button onclick="start(1)">🎲 लूडो</button><button onclick="start(2)">⚪ कैरम</button><button onclick="start(3)">♟ शतरंज</button></div><div id="msg"></div></div>
+<div id="dice"></div>
+<div id="bot"><input id="sl" type="range" min="-2.8" max="2.8" step=".05" value="0"><button id="btn"></button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id),btn=$('btn'),sl=$('sl'),msg=t=>$('msg').textContent=t;
+const R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(Math.min(devicePixelRatio,2));R.shadowMap.enabled=true;document.body.appendChild(R.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0x141826);
+const C=new THREE.PerspectiveCamera(45,1,.1,100);
+S.add(new THREE.HemisphereLight(0xffffff,0x334466,.85));
+const L=new THREE.DirectionalLight(0xffffff,.9);L.position.set(5,12,7);L.castShadow=true;Object.assign(L.shadow.camera,{left:-12,right:12,top:12,bottom:-12});S.add(L);
+const M=(g,c,x=0,y=0,z=0,o={})=>{const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:c,roughness:.5,metalness:.1,...o}));m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;return m};
+const cyl=(a,b,h,s=24)=>new THREE.CylinderGeometry(a,b,h,s),box=(w,h,d)=>new THREE.BoxGeometry(w,h,d),sph=r=>new THREE.SphereGeometry(r,20,14);
+let G=new THREE.Group(),mode={},gid=0;const GAMES=[],A=[];
+const anim=(ms,f)=>new Promise(r=>A.push({s:performance.now(),ms,f,r}));
+const sleep=ms=>{const id=gid;return new Promise(r=>setTimeout(()=>{if(id==gid)r()},ms))};
+const hop=(m,x,z,y=0,ms=260,h=.8)=>{const a=m.position.clone();return anim(ms,t=>m.position.set(a.x+(x-a.x)*t,y+Math.sin(t*Math.PI)*h,a.z+(z-a.z)*t))};
+function boom(x=0,y=2,z=0){for(let i=0;i<70;i++){const m=M(box(.14,.14,.14),Math.random()*0xffffff,x,y,z,{emissive:0x222222}),v=new THREE.Vector3((Math.random()-.5)*8,Math.random()*8+3,(Math.random()-.5)*8);G.add(m);anim(2200,t=>{v.y-=.15;m.position.addScaledVector(v,.016);m.rotation.x+=.2;m.scale.setScalar(1-t*.8)})}}
+/* camera + input */
+const cam={th:0,ph:.85,d:15};
+function setCam(){const k=Math.max(1,1.15/C.aspect),d=cam.d*k;C.position.set(d*Math.sin(cam.ph)*Math.sin(cam.th),d*Math.cos(cam.ph),d*Math.sin(cam.ph)*Math.cos(cam.th));C.lookAt(0,0,0)}
+function rs(){R.setSize(innerWidth,innerHeight);C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix();setCam()}addEventListener('resize',rs);
+const ray=new THREE.Raycaster(),pl=new THREE.Plane(new THREE.Vector3(0,1,0),0),cn=R.domElement;let dn=null;
+function gp(e){ray.setFromCamera(new THREE.Vector2(e.clientX/innerWidth*2-1,-e.clientY/innerHeight*2+1),C);const p=new THREE.Vector3();return ray.ray.intersectPlane(pl,p)?p:null}
+cn.onpointerdown=e=>{dn={x:e.clientX,y:e.clientY,lx:e.clientX,ly:e.clientY,mv:0,own:0};cn.setPointerCapture(e.pointerId);if(mode.down&&mode.down(gp(e)))dn.own=1};
+cn.onpointermove=e=>{if(!dn)return;if(dn.own){mode.move(gp(e));return}dn.mv=Math.hypot(e.clientX-dn.x,e.clientY-dn.y);cam.th-=(e.clientX-dn.lx)*.007;cam.ph=Math.max(.3,Math.min(1.45,cam.ph-(e.clientY-dn.ly)*.005));dn.lx=e.clientX;dn.ly=e.clientY;setCam()};
+cn.onpointerup=e=>{if(!dn)return;if(dn.own)mode.up(gp(e));else if(dn.mv<6&&mode.click)mode.click(gp(e));dn=null};
+/* 3D dice */
+const face=n=>{const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,64,64);x.fillStyle='#111';x.font='bold 44px sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillText(n,32,36);return new THREE.MeshStandardMaterial({map:new THREE.CanvasTexture(c)})};
+const mkDie=(x,z)=>{const d=new THREE.Mesh(box(1,1,1),[3,4,1,6,2,5].map(face));d.position.set(x,.5,z);d.castShadow=true;G.add(d);return d};
+const ROT={1:[0,0],6:[Math.PI,0],2:[-Math.PI/2,0],5:[Math.PI/2,0],3:[0,Math.PI/2],4:[0,-Math.PI/2]};
+async function roll(d){const n=1+Math.random()*6|0,y0=d.position.y;await anim(800,t=>{d.position.y=y0+Math.abs(Math.sin(t*Math.PI*3))*(1-t)*1.5;if(t<.85){d.rotation.x+=.35;d.rotation.z+=.27}else d.rotation.set(ROT[n][0],0,ROT[n][1])});$('dice').textContent=n;return n}
+/* ===== 1. साँप-सीढ़ी ===== */
+GAMES[0]=()=>{
+const cp=n=>{const r=(n-1)/10|0,k=(n-1)%10;return[(r%2?9-k:k)-4.5,4.5-r]};
+const cv=document.createElement('canvas');cv.width=cv.height=800;const g2=cv.getContext('2d');g2.font='bold 26px sans-serif';g2.textAlign='center';g2.textBaseline='middle';
+for(let n=1;n<=100;n++){const[a,b]=cp(n),k=(n-1)%10+((n-1)/10|0);g2.fillStyle=k%2?'#f4d58d':'#8ecae6';g2.fillRect((a+4.5)*80+1,(b+4.5)*80+1,78,78);g2.fillStyle='#333';g2.fillText(n,(a+5)*80,(b+5)*80)}
+const bp=new THREE.Mesh(new THREE.PlaneGeometry(10,10),new THREE.MeshStandardMaterial({map:new THREE.CanvasTexture(cv)}));bp.rotation.x=-Math.PI/2;bp.position.y=.01;bp.receiveShadow=true;
+G.add(M(box(10.6,.3,10.6),0x5b3a29,0,-.15,0),bp);
+const SN={97:61,88:52,62:19,47:26,34:7},LD={3:22,8:30,28:56,41:79,50:69,71:92},P=n=>{const[a,b]=cp(n);return new THREE.Vector3(a,0,b)};
+const bar=(a,b,r,c)=>{const d=b.clone().sub(a),m=M(cyl(r,r,d.length(),10),c);m.position.copy(a).addScaledVector(d,.5);m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.clone().normalize());G.add(m)};
+Object.entries(LD).forEach(([k,v])=>{const a=P(+k),b=P(v),d=b.clone().sub(a),s=new THREE.Vector3(-d.z,0,d.x).normalize().multiplyScalar(.2),u=new THREE.Vector3(0,.15,0);
+[1,-1].forEach(g=>bar(a.clone().add(u).addScaledVector(s,g),b.clone().add(u).addScaledVector(s,g),.05,0x8b5a2b));
+const n=Math.round(d.length()*1.2);for(let i=1;i<n;i++){const p=a.clone().addScaledVector(d,i/n).add(u);bar(p.clone().sub(s),p.clone().add(s),.035,0xc08a4b)}});
+Object.entries(SN).forEach(([k,v],j)=>{const a=P(+k),b=P(v),d=b.clone().sub(a),s=new THREE.Vector3(-d.z,0,d.x).normalize(),c=new THREE.Color().setHSL(j/5,.7,.45);
+for(let i=0;i<=16;i++){const t=i/16,p=a.clone().addScaledVector(d,t).addScaledVector(s,Math.sin(t*Math.PI*3)*.4);G.add(M(sph(i?.17-.07*t:.27),c,p.x,.17,p.z))}});
+const col=[0x2d7ff9,0xe63946],pos=[0,0],at=(i,n)=>{const[x,z]=n?cp(n):[-6,4.5];return[x+(i?.22:-.22),z+(i?.15:-.15)]};
+const tk=col.map((c,i)=>{const g=new THREE.Group();g.add(M(cyl(.22,.3,.35),c,0,.18,0),M(sph(.24),c,0,.5,0));const[x,z]=at(i,0);g.position.set(x,0,z);G.add(g);return g});
+const die=mkDie(7.3,0);let p=0,busy=0;btn.style.display='';btn.textContent='🎲 पासा फेंको';btn.onclick=()=>{if(!busy&&!p)play()};msg('पासा फेंको! पहले 100 पर पहुँचो');
+const nm=()=>p?'कंप्यूटर':'आप';
+async function play(){busy=1;const r=await roll(die);msg(nm()+' ने '+r+' फेंका');const n=pos[p]+r;
+if(n<=100){while(pos[p]<n){pos[p]++;const[x,z]=at(p,pos[p]);await hop(tk[p],x,z)}await sleep(200);
+const j=SN[n]||LD[n];if(j){const up=!!LD[n];msg(up?'🪜 सीढ़ी! ऊपर चढ़े':'🐍 साँप ने काटा! नीचे गिरे');pos[p]=j;const[x,z]=at(p,j),a=tk[p].position.clone(),t0=tk[p];
+await anim(1100,t=>{t0.position.set(a.x+(x-a.x)*t,Math.sin(t*Math.PI)*(up?1.5:.2),a.z+(z-a.z)*t);if(!up){t0.rotation.y=t*12;t0.scale.setScalar(1-.3*Math.sin(t*Math.PI))}});t0.rotation.y=0;t0.scale.setScalar(1)}}
+if(pos[p]==100){msg(nm()+' जीत गए! 🎉');boom(tk[p].position.x,2,tk[p].position.z);return}
+p=1-p;busy=0;if(p){await sleep(700);play()}}
+};
+/* ===== 2. लूडो ===== */
+GAMES[1]=()=>{cam.d=19;
+const COL=[0xe63946,0x2d9cdb,0xf4c20d,0x2ca02c],ST=[0,13,26,39],N=['आप (लाल)','नीला','पीला','हरा'],ang=i=>i*Math.PI*2/52,rp=(r,a)=>[r*Math.cos(a),r*Math.sin(a)];
+G.add(M(cyl(11,11,.4,64),0xf5ecd7,0,-.25,0));
+for(let i=0;i<52;i++){const[x,z]=rp(6,ang(i)),k=ST.indexOf(i);G.add(M(cyl(.33,.33,.08,16),k>=0?COL[k]:i%13==0?0x999999:0xdddddd,x,0,z))}
+for(let k=0;k<4;k++){const a=ang((ST[k]+50)%52);for(let j=1;j<=6;j++){const[x,z]=rp(6-j*.95,a);G.add(M(cyl(.33,.33,.08,16),COL[k],x,0,z))}const[bx,bz]=rp(8.6,ang(ST[k]));G.add(M(cyl(1.5,1.5,.06,32),COL[k],bx,0,bz,{transparent:true,opacity:.55}))}
+const prog=[0,1,2,3].map(()=>[-1,-1,-1,-1]),BO=[[-.55,-.55],[.55,-.55],[-.55,.55],[.55,.55]];
+const xz=(k,i)=>{const p=prog[k][i];if(p<0){const[x,z]=rp(8.6,ang(ST[k]));return[x+BO[i][0],z+BO[i][1]]}
+if(p<=50)return rp(6,ang((ST[k]+p)%52));const[x,z]=rp(6-(p-50)*.95,ang((ST[k]+50)%52));return p==56?[x+BO[i][0]*.3,z+BO[i][1]*.3]:[x,z]};
+const pc=[0,1,2,3].map(k=>[0,1,2,3].map(i=>{const g=new THREE.Group();g.add(M(cyl(.26,.34,.45),COL[k],0,.22,0),M(sph(.28),COL[k],0,.62,0));const[x,z]=xz(k,i);g.position.set(x,0,z);G.add(g);return g}));
+const die=mkDie(6.8,6.8);let k=0,wait=0,bw=0,pulse=[];
+btn.style.display='';btn.textContent='🎲 पासा फेंको';btn.onclick=()=>{if(bw){const f=bw;bw=0;f()}};
+const mv=(k,r)=>[0,1,2,3].filter(i=>{const p=prog[k][i];return p<0?r==6:p+r<=56});
+const hit=(k,np)=>{if(np<0||np>50)return 0;const x=(ST[k]+np)%52;if(x%13==0)return 0;return prog.some((a,j)=>j!=k&&a.some(pp=>pp>=0&&pp<=50&&(ST[j]+pp)%52==x))};
+const ai=(k,o,r)=>o.map(i=>{const q=prog[k][i],np=q<0?0:q+r;return[(hit(k,np)?100:0)+(q<0?30:0)+(np>50?20:0)+np+Math.random(),i]}).sort((a,b)=>b[0]-a[0])[0][1];
+async function move(k,i,r){const q=prog[k][i];
+if(q<0){prog[k][i]=0;const[x,z]=xz(k,i);await hop(pc[k][i],x,z)}else for(let s=0;s<r;s++){prog[k][i]++;const[x,z]=xz(k,i);await hop(pc[k][i],x,z,0,200)}
+let cap=false;const p=prog[k][i];
+if(p>=0&&p<=50){const idx=(ST[k]+p)%52;if(idx%13)for(let a=0;a<4;a++)if(a!=k)for(let b=0;b<4;b++){const pp=prog[a][b];if(pp>=0&&pp<=50&&(ST[a]+pp)%52==idx){cap=true;msg('⚔️ '+N[k]+' ने '+N[a]+' की गोटी काट दी!');prog[a][b]=-1;const m=pc[a][b],[x,z]=xz(a,b);await anim(300,t=>m.scale.setScalar(1+t*.7));await hop(m,x,z,0,650,3);m.scale.setScalar(1)}}}
+return cap}
+mode.click=pt=>{if(!wait||!pt)return;let best=-1,bd=1.3;pulse.forEach(i=>{const m=pc[0][i].position,d=Math.hypot(m.x-pt.x,m.z-pt.z);if(d<bd){bd=d;best=i}});if(best>=0){const f=wait;wait=0;f(best)}};
+mode.tick=()=>{const t=performance.now()/200;pulse.forEach(i=>pc[0][i].scale.setScalar(1+.18*Math.sin(t)))};
+(async()=>{for(;;){
+if(k==0){msg('आपकी बारी — पासा फेंको');await new Promise(r=>bw=r)}else{msg(N[k]+' की बारी');await sleep(600)}
+const r=await roll(die),o=mv(k,r);let extra=r==6;msg(N[k]+': '+r+(o.length?'':' — कोई चाल नहीं'));
+if(o.length){let i;if(k==0&&o.length>1){msg('आप: '+r+' — अपनी चमकती गोटी छुएँ');pulse=o;i=await new Promise(r=>wait=r);pulse=[];pc[0].forEach(m=>m.scale.setScalar(1))}else{await sleep(450);i=k?ai(k,o,r):o[0]}
+if(await move(k,i,r))extra=true;
+if(prog[k].every(p=>p==56)){msg(N[k]+' जीत गया! 🎉');boom();return}}
+await sleep(400);if(!extra)k=(k+1)%4}})();
+};
+/* ===== 3. कैरम ===== */
+GAMES[2]=()=>{cam.d=12.5;cam.ph=.8;
+G.add(M(box(9,.3,9),0x6b4423,0,-.25,0),M(box(8,.2,8),0xe9cf94,0,-.1,0));
+[[0,-4.2,8.8,.4],[0,4.2,8.8,.4],[-4.2,0,.4,8],[4.2,0,.4,8]].forEach(([x,z,w,d])=>G.add(M(box(w,.35,d),0x4a2c12,x,.1,z)));
+[[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([a,b])=>G.add(M(cyl(.45,.45,.03),0x111111,a*3.85,.01,b*3.85)));
+const bd=[],mkb=(x,z,r,c,t)=>{const m=M(cyl(r,r,t=='s'?.14:.1,28),c,x,.06,z);G.add(m);const b={m,x,z,vx:0,vz:0,r,t,on:1};bd.push(b);return b};
+const st=mkb(0,3.2,.3,0x3a86ff,'s');mkb(0,0,.22,0xd62828,'q');
+for(let i=0;i<6;i++)mkb(Math.cos(i*Math.PI/3)*.5,Math.sin(i*Math.PI/3)*.5,.22,i%2?0x222222:0xf8f8f8,'c');
+for(let i=0;i<12;i++)mkb(Math.cos(i*Math.PI/6+.26),Math.sin(i*Math.PI/6+.26),.22,i%2?0x222222:0xf8f8f8,'c');
+let score=0,shot=0,aim=0,acc=0,over=0,last=performance.now();const dt=1/120;
+const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),new THREE.LineBasicMaterial({color:0xffffff}));line.visible=false;line.position.y=.2;G.add(line);
+const left=()=>bd.filter(b=>b.on&&b.t!='s').length,info=()=>msg('स्कोर: '+score+' · बची गोटियाँ: '+left()+' · स्ट्राइकर खींचकर छोड़ो');
+sl.style.display='';sl.value=0;sl.oninput=()=>{if(!shot)st.x=+sl.value};info();
+const dirOf=pt=>{const dx=st.x-pt.x,dz=st.z-pt.z,h=Math.hypot(dx,dz)||1;return[dx/h,dz/h,Math.min(h,3)]};
+mode.down=pt=>{if(pt&&!shot&&!over&&Math.hypot(pt.x-st.x,pt.z-st.z)<1.3){aim=1;return 1}};
+mode.move=pt=>{if(!aim||!pt)return;const[x,z,l]=dirOf(pt);line.geometry.setFromPoints([new THREE.Vector3(st.x,0,st.z),new THREE.Vector3(st.x+x*l*1.3,0,st.z+z*l*1.3)]);line.visible=true};
+mode.up=pt=>{line.visible=false;if(!aim||!pt){aim=0;return}aim=0;const[x,z,l]=dirOf(pt);if(l<.25)return;st.vx=x*l*6;st.vz=z*l*6;shot=1;msg('शॉट!')};
+const pk=b=>{b.on=0;b.vx=b.vz=0;if(b.t=='s'){score=Math.max(0,score-1);msg('स्ट्राइकर पॉकेट में गया! −1')}else score+=b.t=='q'?3:1;anim(450,t=>{b.m.position.y=.06-t*.4;b.m.scale.setScalar(1-t*.8)}).then(()=>b.m.visible=false)};
+function step(){
+for(const b of bd){if(!b.on)continue;b.x+=b.vx*dt;b.z+=b.vz*dt;const f=Math.exp(-1.2*dt);b.vx*=f;b.vz*=f;if(b.vx*b.vx+b.vz*b.vz<.02)b.vx=b.vz=0;
+if(Math.abs(b.x)>4-b.r){b.x=Math.sign(b.x)*(4-b.r);b.vx*=-.8}if(Math.abs(b.z)>4-b.r){b.z=Math.sign(b.z)*(4-b.r);b.vz*=-.8}}
+for(let i=0;i<bd.length;i++)for(let j=i+1;j<bd.length;j++){const a=bd[i],b=bd[j];if(!a.on||!b.on)continue;const dx=a.x-b.x,dz=a.z-b.z,d=Math.hypot(dx,dz),m=a.r+b.r;
+if(d<m&&d>0){const nx=dx/d,nz=dz/d,o=(m-d)/2;a.x+=nx*o;a.z+=nz*o;b.x-=nx*o;b.z-=nz*o;const vr=(a.vx-b.vx)*nx+(a.vz-b.vz)*nz;if(vr<0){const j2=-(1.9)*vr/2;a.vx+=j2*nx;a.vz+=j2*nz;b.vx-=j2*nx;b.vz-=j2*nz}}}
+for(const b of bd)if(b.on)for(const[cx,cz]of[[-4,-4],[4,-4],[-4,4],[4,4]])if(b.on&&Math.hypot(b.x-cx,b.z-cz)<.6)pk(b)}
+mode.tick=()=>{if(over)return;const n=performance.now();acc+=Math.min(.05,(n-last)/1e3);last=n;while(acc>dt){acc-=dt;step()}
+bd.forEach(b=>{if(b.on)b.m.position.set(b.x,.06,b.z)});
+if(shot&&!bd.some(b=>b.on&&(b.vx||b.vz))){shot=0;if(!st.on){st.on=1;st.m.visible=true;st.m.scale.setScalar(1)}st.x=0;st.z=3.2;sl.value=0;
+if(!left()){msg('सारी गोटियाँ निकल गईं! 🎉 स्कोर '+score);boom();over=1}else info()}};
+};
+/* ===== 4. शतरंज ===== */
+GAMES[3]=()=>{cam.d=13;cam.ph=.8;
+G.add(M(box(9,.3,9),0x3b2414,0,-.3,0));
+for(let r=0;r<8;r++)for(let c=0;c<8;c++)G.add(M(box(1,.2,1),(r+c)%2?0x7a5230:0xe6cfa0,c-3.5,-.1,r-3.5));
+const mk=(t,w)=>{const g=new THREE.Group(),c=w?0xf4ead0:0x2b2d38,h={p:.6,r:.85,n:.95,b:1.05,q:1.2,k:1.3}[t],y=.14+h;
+g.add(M(cyl(.34,.38,.14),c,0,.07,0),M(cyl(.14,.27,h),c,0,.14+h/2,0));
+if(t=='p')g.add(M(sph(.2),c,0,y+.1,0));
+if(t=='r')g.add(M(box(.5,.22,.5),c,0,y+.05,0));
+if(t=='n'){const m=M(box(.26,.5,.5),c,0,y+.05,.05);m.rotation.x=.5;g.add(m)}
+if(t=='b')g.add(M(sph(.2),c,0,y+.12,0),M(cyl(.02,.1,.22,10),c,0,y+.32,0));
+if(t=='q')g.add(M(sph(.26),c,0,y+.1,0),M(sph(.08),c,0,y+.42,0));
+if(t=='k')g.add(M(box(.14,.5,.14),c,0,y+.2,0),M(box(.4,.14,.14),c,0,y+.3,0));
+return g};
+const B=[...Array(8)].map(()=>Array(8).fill(null)),row='rnbqkbnr';
+const put=(r,c,t,w)=>{const m=mk(t,w);m.position.set(c-3.5,0,r-3.5);G.add(m);B[r][c]={t,w,m}};
+for(let c=0;c<8;c++){put(0,c,row[c],0);put(1,c,'p',0);put(6,c,'p',1);put(7,c,row[c],1)}
+const D={n:[[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]],k:[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]};D.r=D.k.slice(0,4);D.b=D.k.slice(4);D.q=D.k;
+const mvs=(r,c)=>{const p=B[r][c],o=[];
+const add=(a,b,m)=>{if(a<0||a>7||b<0||b>7)return 0;const q=B[a][b];if(q){if(q.w!=p.w&&m!==0)o.push([a,b]);return 0}if(m!==1)o.push([a,b]);return 1};
+if(p.t=='p'){const d=p.w?-1:1;if(add(r+d,c,0)&&r==(p.w?6:1))add(r+2*d,c,0);add(r+d,c-1,1);add(r+d,c+1,1)}
+else if(p.t=='n'||p.t=='k')D[p.t].forEach(([a,b])=>add(r+a,c+b));
+else D[p.t].forEach(([a,b])=>{let x=r+a,y=c+b;while(add(x,y)){x+=a;y+=b}});
+return o};
+const hl=new THREE.Group();G.add(hl);let sel=null,hm=[],turnW=true,fin=0;msg('आपकी बारी (सफेद) — गोटी छुएँ');
+const V={p:1,n:3,b:3,r:5,q:9,k:100};
+async function go(r,c,a,b){turnW=false;hl.clear();sel=null;hm=[];const p=B[r][c],v=B[a][b];B[r][c]=null;B[a][b]=p;const jobs=[hop(p.m,b-3.5,a-3.5,0,500,1.2)];
+if(v){msg('⚔️ गोटी कट गई!');jobs.push(anim(500,t=>{v.m.scale.setScalar(1-t);v.m.rotation.y=t*8;v.m.position.y=t*1.5}).then(()=>G.remove(v.m)))}
+await Promise.all(jobs);
+if(p.t=='p'&&(a==0||a==7)){p.t='q';G.remove(p.m);p.m=mk('q',p.w);p.m.position.set(b-3.5,0,a-3.5);G.add(p.m);msg('प्यादा वज़ीर बन गया!')}
+if(v&&v.t=='k'){msg(p.w?'आप जीत गए! 🎉':'कंप्यूटर जीता');fin=1;boom();return}
+if(p.w){await sleep(500);ai()}else{turnW=true;msg('आपकी बारी (सफेद)')}}
+function ai(){let best=null,bs=-1;for(let r=0;r<8;r++)for(let c=0;c<8;c++){const p=B[r][c];if(p&&!p.w)mvs(r,c).forEach(([a,b])=>{const s=(B[a][b]?V[B[a][b].t]*10:0)+Math.random()*4;if(s>bs){bs=s;best=[r,c,a,b]}})}
+if(!best){msg('कंप्यूटर के पास चाल नहीं — आप जीते!');fin=1;boom();return}msg('कंप्यूटर सोच रहा है…');go(...best)}
+mode.click=pt=>{if(!turnW||!pt||fin)return;const c=Math.round(pt.x+3.5),r=Math.round(pt.z+3.5);if(c<0||c>7||r<0||r>7)return;
+if(sel&&hm.some(([a,b])=>a==r&&b==c)){go(sel[0],sel[1],r,c);return}
+hl.clear();sel=null;hm=[];const q=B[r][c];
+if(q&&q.w){sel=[r,c];hm=mvs(r,c);hl.add(M(cyl(.45,.45,.03),0xffd23f,c-3.5,.02,r-3.5,{emissive:0x886600}));hm.forEach(([a,b])=>hl.add(M(cyl(.2,.2,.04),B[a][b]?0xff4444:0x44ff88,b-3.5,.03,a-3.5,{emissive:B[a][b]?0x660000:0x006622})))}};
+};
+rs();start(0);
+function start(n){gid++;S.remove(G);A.length=0;G=new THREE.Group();S.add(G);mode={};document.querySelectorAll('#top button').forEach((b,i)=>b.classList.toggle('on',i==n));btn.style.display=sl.style.display='none';$('dice').textContent='';msg('');cam.th=0;cam.ph=.85;cam.d=15;GAMES[n]();setCam()}
+(function loop(){requestAnimationFrame(loop);const n=performance.now();for(let i=A.length-1;i>=0;i--){const a=A[i],t=Math.min(1,(n-a.s)/a.ms);a.f(t);if(t>=1){A.splice(i,1);a.r()}}if(mode.tick)mode.tick();R.render(S,C)})();
+</script></body></html>
